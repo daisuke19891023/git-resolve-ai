@@ -17,6 +17,9 @@ __all__ = [
     "PlanHint",
     "ResolutionStrategy",
     "StrategyAdvice",
+    "StrategyAdviceResult",
+    "advise_strategy",
+    "build_strategy_prompt",
     "complete_json",
     "compose_instructions",
     "make_client_from_env",
@@ -47,6 +50,7 @@ if TYPE_CHECKING:
         sanitize_model_schema,
     )
     from .patch import PatchProposalResult
+    from .advice import StrategyAdviceResult, advise_strategy, build_strategy_prompt
 
 
 _MODULE_EXPORTS: dict[str, tuple[str, str]] = {
@@ -68,6 +72,9 @@ _MODULE_EXPORTS: dict[str, tuple[str, str]] = {
     "LLMSettings": ("goapgit.llm.client", "LLMSettings"),
     "make_client_from_env": ("goapgit.llm.client", "make_client_from_env"),
     "PatchProposalResult": ("goapgit.llm.patch", "PatchProposalResult"),
+    "StrategyAdviceResult": ("goapgit.llm.advice", "StrategyAdviceResult"),
+    "advise_strategy": ("goapgit.llm.advice", "advise_strategy"),
+    "build_strategy_prompt": ("goapgit.llm.advice", "build_strategy_prompt"),
 }
 
 
