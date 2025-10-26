@@ -15,16 +15,21 @@ __all__ = [
     "PatchProposalResult",
     "PatchSet",
     "PlanHint",
+    "PlanHintResult",
     "ResolutionStrategy",
     "StrategyAdvice",
     "StrategyAdviceResult",
     "advise_strategy",
+    "apply_plan_hint",
+    "build_plan_prompt",
     "build_strategy_prompt",
+    "clamp_cost_adjustment",
     "complete_json",
     "compose_instructions",
     "make_client_from_env",
     "messenger_instructions",
     "planner_instructions",
+    "request_plan_hint",
     "resolver_instructions",
     "sanitize_model_schema",
 ]
@@ -51,6 +56,13 @@ if TYPE_CHECKING:
     )
     from .patch import PatchProposalResult
     from .advice import StrategyAdviceResult, advise_strategy, build_strategy_prompt
+    from .plan import (
+        PlanHintResult,
+        apply_plan_hint,
+        build_plan_prompt,
+        clamp_cost_adjustment,
+        request_plan_hint,
+    )
 
 
 _MODULE_EXPORTS: dict[str, tuple[str, str]] = {
@@ -75,6 +87,11 @@ _MODULE_EXPORTS: dict[str, tuple[str, str]] = {
     "StrategyAdviceResult": ("goapgit.llm.advice", "StrategyAdviceResult"),
     "advise_strategy": ("goapgit.llm.advice", "advise_strategy"),
     "build_strategy_prompt": ("goapgit.llm.advice", "build_strategy_prompt"),
+    "PlanHintResult": ("goapgit.llm.plan", "PlanHintResult"),
+    "request_plan_hint": ("goapgit.llm.plan", "request_plan_hint"),
+    "build_plan_prompt": ("goapgit.llm.plan", "build_plan_prompt"),
+    "apply_plan_hint": ("goapgit.llm.plan", "apply_plan_hint"),
+    "clamp_cost_adjustment": ("goapgit.llm.plan", "clamp_cost_adjustment"),
 }
 
 
