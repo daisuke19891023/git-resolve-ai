@@ -9,6 +9,7 @@ dependencies = [
     "pydantic>=2.12.3",
     "pydantic-settings>=2.11.0",
     "ulid>=1.1",
+    "openai>=2.6",
     "typer>=0.15.0",
 ] # Update as needed for real project requirements
 
