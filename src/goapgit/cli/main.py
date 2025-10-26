@@ -5,12 +5,20 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Callable, Sequence  # noqa: UP035
+from typing import TYPE_CHECKING, Annotated, Any, Callable, Sequence, cast  # noqa: UP035
 
 import typer
 from pydantic import ValidationError
 
 from goapgit.cli.diagnose import DiagnoseError, generate_diagnosis, report_to_json
+from goapgit.cli.llm_doctor import run_doctor
+from goapgit.cli.run import (
+    DEFAULT_MODEL,
+    LLMRunMode,
+    LLMRunOptions,
+    LLMSafetyLevel,
+    perform_llm_assistance,
+)
 from goapgit.cli.runtime import (
     WorkflowContext,
     build_action_contexts,
@@ -28,6 +36,8 @@ if TYPE_CHECKING:
 
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
+llm_app = typer.Typer(help="Utilities for LLM integrations.")
+app.add_typer(llm_app, name="llm")
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,9 +147,13 @@ def _safe_build_plan_payload(context: WorkflowContext) -> PlanComputation:
     return _handle_git_failures(lambda: _build_plan_payload(context))
 
 
-def _safe_execute_workflow(context: WorkflowContext) -> dict[str, Any]:
+def _safe_execute_workflow(
+    context: WorkflowContext,
+    *,
+    llm_options: LLMRunOptions | None = None,
+) -> dict[str, Any]:
     """Wrap workflow execution and surface CLI-friendly errors."""
-    return _handle_git_failures(lambda: _execute_workflow(context))
+    return _handle_git_failures(lambda: _execute_workflow(context, llm_options=llm_options))
 
 
 @app.callback()
@@ -172,6 +186,38 @@ ConfirmFlag = Annotated[
     bool,
     typer.Option(help="Execute actions for real."),
 ]
+
+
+@llm_app.command("doctor")
+def llm_doctor_command(
+    json_output: JsonFlag = False,
+    model: Annotated[
+        str,
+        typer.Option(
+            "--model",
+            help="Model or deployment identifier used for the diagnostic call.",
+        ),
+    ] = DEFAULT_MODEL,
+    mock: Annotated[
+        bool,
+        typer.Option("--mock", help="Use mock responses instead of contacting the API."),
+    ] = False,
+) -> None:
+    """Run connectivity and structured output diagnostics for LLM settings."""
+    report = run_doctor(model=model, mock=mock)
+
+    if json_output:
+        _emit_json(report.to_payload())
+        return
+
+    provider = report.provider or "unknown"
+    mode_label = "mock" if report.mocked else "live"
+    lines = [f"LLM Doctor (provider={provider}, mode={mode_label})"]
+    for check in report.checks:
+        status_label = "OK" if check.status == "ok" else "ERROR"
+        detail = f" - {check.detail}" if check.detail else ""
+        lines.append(f"- {check.name}: {status_label}{detail}")
+    typer.echo("\n".join(lines))
 
 
 @app.command("plan")
@@ -217,8 +263,28 @@ def plan_command(
     typer.echo("\n".join(lines))
 
 
-def _execute_workflow(context: WorkflowContext) -> dict[str, Any]:
+def _execute_workflow(
+    context: WorkflowContext,
+    *,
+    llm_options: LLMRunOptions | None = None,
+) -> dict[str, Any]:
     computation = _build_plan_payload(context)
+    llm_payload: dict[str, Any] | None = None
+    if llm_options is not None and llm_options.mode is not LLMRunMode.OFF:
+        try:
+            llm_payload = perform_llm_assistance(
+                context=context,
+                state=computation.state,
+                plan=computation.plan,
+                options=llm_options,
+            )
+        except Exception as exc:  # pragma: no cover - defensive guard
+            context.logger.error("llm assistance failed", error=str(exc))
+            llm_payload = {
+                "mode": llm_options.mode.value,
+                "safety": llm_options.safety.value,
+                "errors": [str(exc)],
+            }
     runner = context.build_action_runner()
     executor = Executor(
         planner=context.planner,
@@ -229,7 +295,7 @@ def _execute_workflow(context: WorkflowContext) -> dict[str, Any]:
     )
     result = executor.execute(computation.state, computation.plan)
 
-    return {
+    payload: dict[str, Any] = {
         "repository": str(context.repo_path),
         "initial_state": computation.state.model_dump(mode="json"),
         "initial_plan": computation.plan.model_dump(mode="json"),
@@ -239,6 +305,9 @@ def _execute_workflow(context: WorkflowContext) -> dict[str, Any]:
         "command_history": list(context.action_facade.command_history),
         "dry_run": context.action_facade.dry_run,
     }
+    if llm_payload:
+        payload["llm"] = llm_payload
+    return payload
 
 
 @app.command("run")
@@ -247,6 +316,38 @@ def run_command(
     config: ConfigOption = None,
     json_output: JsonFlag = False,
     confirm: ConfirmFlag = False,
+    llm_mode: Annotated[
+        LLMRunMode,
+        typer.Option(
+            "--llm",
+            case_sensitive=False,
+            help="Enable LLM assistance mode.",
+        ),
+    ] = LLMRunMode.OFF,
+    llm_safety: Annotated[
+        LLMSafetyLevel,
+        typer.Option(
+            "--llm-safety",
+            case_sensitive=False,
+            help="Safety profile controlling automatic patch application.",
+        ),
+    ] = LLMSafetyLevel.BALANCED,
+    llm_model: Annotated[
+        str | None,
+        typer.Option("--llm-model", help="Override the model or deployment name."),
+    ] = None,
+    llm_max_tokens: Annotated[
+        int | None,
+        typer.Option("--llm-max-tokens", help="Maximum total tokens to consume."),
+    ] = None,
+    llm_max_cost: Annotated[
+        float | None,
+        typer.Option("--llm-max-cost", help="Maximum LLM cost in USD."),
+    ] = None,
+    llm_mock: Annotated[
+        bool,
+        typer.Option("--llm-mock", help="Skip live LLM calls and return mock results."),
+    ] = False,
 ) -> None:
     """Execute the workflow plan, respecting the confirmation flag."""
     context = _prepare_context(
@@ -256,7 +357,15 @@ def run_command(
         dry_run_actions=not confirm,
         silence_logs=json_output,
     )
-    payload = _safe_execute_workflow(context)
+    llm_options = LLMRunOptions(
+        mode=llm_mode,
+        safety=llm_safety,
+        model=llm_model,
+        max_tokens=llm_max_tokens,
+        max_cost=llm_max_cost,
+        mock=llm_mock,
+    )
+    payload = _safe_execute_workflow(context, llm_options=llm_options)
 
     if json_output:
         _emit_json(payload)
@@ -273,6 +382,28 @@ def run_command(
         lines.append("Plan executed without replanning.")
     for index, action in enumerate(payload["executed_actions"], start=1):
         lines.append(f"  {index}. {action['name']}")
+    llm_payload_raw = payload.get("llm")
+    if isinstance(llm_payload_raw, dict):
+        llm_payload = cast("dict[str, Any]", llm_payload_raw)
+        lines.append(
+            f"LLM: mode={llm_payload.get('mode', 'unknown')} safety={llm_payload.get('safety', 'unknown')}",
+        )
+        suggestions_obj = llm_payload.get("suggestions")
+        typed_suggestions: list[dict[str, Any]] = []
+        if isinstance(suggestions_obj, list):
+            suggestions_list = cast("list[object]", suggestions_obj)
+            typed_suggestions = [
+                cast("dict[str, Any]", suggestion_entry)
+                for suggestion_entry in suggestions_list
+                if isinstance(suggestion_entry, dict)
+            ]
+        if typed_suggestions:
+            lines.append("LLM suggestions:")
+            for suggestion in typed_suggestions:
+                status = "applied" if suggestion.get("applied") else "proposed"
+                lines.append(
+                    f"  - {suggestion.get('path', 'unknown')} ({suggestion.get('confidence')}) [{status}]",
+                )
     typer.echo("\n".join(lines))
 
 

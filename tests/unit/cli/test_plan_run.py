@@ -184,7 +184,7 @@ def test_dry_run_command_escapes_control_sequences(monkeypatch: pytest.MonkeyPat
     def fake_prepare_context(*_: object, **__: object) -> object:
         return sentinel_context
 
-    def fake_execute_workflow(_: object) -> dict[str, object]:
+    def fake_execute_workflow(_: object, **__: object) -> dict[str, object]:
         return payload
 
     monkeypatch.setattr(cli_main, "_prepare_context", fake_prepare_context)
