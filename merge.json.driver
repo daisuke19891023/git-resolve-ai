@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+# Invoke the GOAPGit JSON merge driver implemented in Python.
+exec python -m goapgit.plugins.json_merge "$@"

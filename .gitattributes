@@ -1,0 +1,3 @@
+# Configure custom merge driver for structured JSON documents.
+*.json merge=json
+*.JSON merge=json
