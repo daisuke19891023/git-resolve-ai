@@ -112,7 +112,7 @@ def test_propose_patch_calls_responses_with_schema_and_rules(tmp_path: Path) -> 
     assert result.patch_set.rationale == "ok"
     assert result.response_id == "resp_1"
 
-    stub_responses = cast(_StubResponses, client.responses)
+    stub_responses = cast("_StubResponses", client.responses)
     assert len(stub_responses.calls) == 1
     payload = stub_responses.calls[0]
     assert payload["model"] == "responses-test"
@@ -159,7 +159,7 @@ def test_propose_patch_retry_uses_previous_id(tmp_path: Path) -> None:
     assert first.patch_set.patches == ("patch-1",)
     assert second.patch_set.patches == ("patch-2",)
 
-    stub_responses = cast(_StubResponses, client.responses)
+    stub_responses = cast("_StubResponses", client.responses)
     assert len(stub_responses.calls) == 2
     retry_payload = stub_responses.calls[1]
     assert retry_payload["previous_response_id"] == "resp_1"
@@ -189,7 +189,7 @@ def test_patch_payloads_pass_git_apply_check(tmp_path: Path, filename: str) -> N
 
     conflict_content = {
         "config.json": dedent(
-            """
+            """\
             {
             <<<<<<< ours
               "version": "1.0.0"
@@ -200,7 +200,7 @@ def test_patch_payloads_pass_git_apply_check(tmp_path: Path, filename: str) -> N
             """,
         ),
         "README.md": dedent(
-            """
+            """\
             # Title
             <<<<<<< ours
             - old
@@ -210,7 +210,7 @@ def test_patch_payloads_pass_git_apply_check(tmp_path: Path, filename: str) -> N
             """,
         ),
         "yarn.lock": dedent(
-            """
+            """\
             <<<<<<< ours
             left@1.0.0
             =======
@@ -225,37 +225,37 @@ def test_patch_payloads_pass_git_apply_check(tmp_path: Path, filename: str) -> N
             "diff --git a/config.json b/config.json\n"
             "--- a/config.json\n"
             "+++ b/config.json\n"
-            "@@\n"
+            "@@ -1,7 +1,3 @@\n"
+            " {\n"
             "-<<<<<<< ours\n"
             '-  "version": "1.0.0"\n'
             "-=======\n"
-            '-  "version": "1.1.0"\n'
+            '   "version": "1.1.0"\n'
             "->>>>>>> theirs\n"
-            '+  "version": "1.1.0"\n'
+            " }\n"
         ),
         "README.md": (
             "diff --git a/README.md b/README.md\n"
             "--- a/README.md\n"
             "+++ b/README.md\n"
-            "@@\n"
+            "@@ -1,6 +1,2 @@\n"
+            " # Title\n"
             "-<<<<<<< ours\n"
             "-- old\n"
             "-=======\n"
-            "-- new\n"
+            " - new\n"
             "->>>>>>> theirs\n"
-            "+- new\n"
         ),
         "yarn.lock": (
             "diff --git a/yarn.lock b/yarn.lock\n"
             "--- a/yarn.lock\n"
             "+++ b/yarn.lock\n"
-            "@@\n"
+            "@@ -1,5 +1 @@\n"
             "-<<<<<<< ours\n"
             "-left@1.0.0\n"
             "-=======\n"
-            "-left@1.1.0\n"
+            " left@1.1.0\n"
             "->>>>>>> theirs\n"
-            "+left@1.1.0\n"
         ),
     }[filename]
 
