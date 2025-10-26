@@ -66,6 +66,10 @@ def complete_json(
         ``response.output_text`` for logging/telemetry.
 
     """
+    if not instructions or not instructions.strip():
+        message = "Instructions must be a non-empty string for every Responses call."
+        raise ValueError(message)
+
     schema_payload = dict(schema)
 
     request_payload: dict[str, Any] = {
