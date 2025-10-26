@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, cast
 
+import pytest
+
 from goapgit.llm.responses import CompleteJsonResult, ResponsesClient, complete_json
 
 
@@ -125,3 +127,17 @@ def test_complete_json_links_previous_response_id() -> None:
     # The same instructions are sent on every call to maintain guard rails.
     assert stub_client.responses.calls[0]["instructions"] == "Always respond in JSON"
     assert stub_client.responses.calls[1]["instructions"] == "Always respond in JSON"
+
+
+def test_complete_json_rejects_blank_instructions() -> None:
+    """Empty instructions would violate the guard rail policy."""
+    stub_client = _StubClient(_StubResponse(id="resp_1", output_text='{"message": "hi"}'))
+
+    with pytest.raises(ValueError, match="Instructions must be a non-empty string"):
+        complete_json(
+            cast("ResponsesClient", stub_client),
+            model="test-model",
+            instructions="   ",
+            schema=SCHEMA,
+            prompt="Say hi",
+        )

@@ -88,6 +88,11 @@ Every request:
 2. Supplies only the newest snippets (e.g., a conflict hunk, a failed test summary) as input content.
 3. Links to the immediately preceding response with `previous_response_id` when follow-up context is needed.
 
+The resend policy mirrors the [OpenAI Realtime specification](https://platform.openai.com/docs/guides/realtime) where `instructions`
+are not stored server-side: each turn is independent unless the client threads calls with `previous_response_id`. GOAPGit therefore
+serialises the full instruction template on every Responses request to ensure guard rails remain in force even if the model recovers
+from a dropped connection or the client retries.
+
 Telemetry stores `response.id`, the linked `previous_response_id`, and token usage as JSON Lines. The generated text itself is
 not persisted. Secrets are redacted before sending payloads to the model.
 
