@@ -12,6 +12,7 @@ __all__ = [
     "LLMProvider",
     "LLMSettings",
     "MessageDraft",
+    "PatchProposalResult",
     "PatchSet",
     "PlanHint",
     "ResolutionStrategy",
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
         StrategyAdvice,
         sanitize_model_schema,
     )
+    from .patch import PatchProposalResult
 
 
 _MODULE_EXPORTS: dict[str, tuple[str, str]] = {
@@ -65,6 +67,7 @@ _MODULE_EXPORTS: dict[str, tuple[str, str]] = {
     "LLMProvider": ("goapgit.llm.client", "LLMProvider"),
     "LLMSettings": ("goapgit.llm.client", "LLMSettings"),
     "make_client_from_env": ("goapgit.llm.client", "make_client_from_env"),
+    "PatchProposalResult": ("goapgit.llm.patch", "PatchProposalResult"),
 }
 
 
