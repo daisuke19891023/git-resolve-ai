@@ -37,6 +37,9 @@ goapgit/
     json_merge.py  # JSON/YAML 専用マージドライバの例
   cli/
     main.py        # Typer ベース CLI
+  llm/
+    client.py      # Responses API ラッパ（OpenAI/Azure 切替）
+    instructions.py  # 役割別テンプレート生成
   io/
     config.py      # 設定（pydantic）読み込み/検証
     logging.py     # 構造化ログ
@@ -77,6 +80,14 @@ goapgit/
 - `git pull --rebase` / `--ff-only` を状況に応じて切り替え、直線履歴を維持。
 - 大規模リポは `git sparse-checkout`（cone モード）や `git worktree` を活用し、操作を分離・高速化。
 - 説明可能性のため `git range-diff` を用いた差分提示を組み込む。
+
+### 2.4 LLM 支援ワークフロー（Responses API 統一）
+
+- 競合パッチ提案、戦術助言、プラン補正、メッセージ生成に OpenAI Python SDK の `client.responses.create(...)` を採用する。
+- 直前ターンのみを `previous_response_id` で連結し、入力には今回必要な最小情報（競合ハンク抜粋、失敗要約など）だけを送信する。
+- すべてのターンで `instructions` を明示送信し、ガードレールと出力形式を毎回固定する。
+- Structured Outputs（JSON Schema strict モード）で Patch/Advice/PlanHint/Message を Pydantic から生成し、`additionalProperties=false` に正規化する。
+- テレメトリに `response.id`, `previous_response_id`, トークン使用量を記録し、本文は保存しない。
 
 ---
 
@@ -184,6 +195,40 @@ class Config(BaseModel):
 
 ---
 
+### 3.5 LLM 連携モデル（Structured Outputs）
+
+Responses API の Structured Outputs 制約に合わせ、以下の Pydantic モデルを厳格化する。すべて `ConfigDict(extra="forbid")` を設定し、
+Schema サニタイザで `additionalProperties=false` と必須フィールド列挙を保証する。
+
+```python
+class PatchSet(BaseModel):
+    patches: tuple[str, ...]
+    confidence: Literal["low", "med", "high"]
+    rationale: str
+    model_config = ConfigDict(extra="forbid")
+
+class StrategyAdvice(BaseModel):
+    resolution: Literal["ours", "theirs", "manual", "merge-driver"]
+    reason: str
+    confidence: Literal["low", "med", "high"]
+    model_config = ConfigDict(extra="forbid")
+
+class PlanHint(BaseModel):
+    action: str
+    cost_adjustment_pct: float  # ±20% にクランプ
+    note: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+class MessageDraft(BaseModel):
+    title: str  # 72 文字以内
+    body: str   # 目的→変更→影響→ロールバックの章立て
+    model_config = ConfigDict(extra="forbid")
+```
+
+Azure/OpenAI 双方で同一スキーマを利用し、JSON Schema は `model_json_schema()` をサニタイズした上で `strict=true` で送信する。
+
+---
+
 ## 4. アクション設計（最新 Git の取り込み）
 
 各 Action は「前提条件」「効果」「コスト」「失敗時の巻き戻し方針」を持つ。ここでは主なカテゴリを示す。
@@ -268,9 +313,20 @@ rules = [
 dry_run = true
 allow_force_push = false
 max_test_runtime_sec = 600
+
+[llm]
+provider = "env"          # env → openai/azure を環境変数で指定
+model = "gpt-4o-mini"      # Azure はデプロイ名
+mode = "suggest"           # off|explain|suggest|auto
+safety = "balanced"
+max_tokens = 1200
+max_cost_usd = 1.0
 ```
 
-CLI フラグやプロファイルは `overrides` でマージし、ValidationError を以て型不整合を通知する。
+優先順位は「環境変数 > TOML > デフォルト」。`GOAPGIT_LLM_PROVIDER` が `azure` の場合、`AzureOpenAI` クライアントを選び `AZURE_OPENAI_API_KEY`
+もしくは `AZURE_OPENAI_AD_TOKEN`、`AZURE_OPENAI_ENDPOINT`、`OPENAI_API_VERSION` を要求する。`openai` の場合は `OpenAI` クライアントを使い
+`OPENAI_API_KEY` と任意の `OPENAI_BASE_URL` を解決する。CLI フラグやプロファイルは `overrides` でマージし、ValidationError を以て型不整合
+を通知する。
 
 ---
 
@@ -279,6 +335,7 @@ CLI フラグやプロファイルは `overrides` でマージし、ValidationEr
 - `uv` を標準ツールとし、`uv add`, `uv lock`, `uv sync` を基礎コマンドとする。
 - `tool.uv.package = true` を指定し、パッケージとしての扱いを固定。
 - `pyproject.toml` では `pydantic>=2.6`, `typer>=0.12`, `rich>=13.7` を主依存とし、`pytest`, `ruff`, `mypy` 等を dev 依存に登録。
+- Responses API を扱う optional extra `llm` を設け、`openai>=2.6`, `httpx>=0.27` を含める。
 - `uv.lock` を VCS にコミットし再現性を確保する。
 
 ---
@@ -308,16 +365,47 @@ CLI フラグやプロファイルは `overrides` でマージし、ValidationEr
 
 ---
 
-## 12. 実装タスク一覧（T01〜T61）
+## 12. 実装タスク一覧（LZ01〜LZ31）
 
-各タスクは 1〜3 時間規模で、受け入れ基準 (AC) を満たす必要がある。代表例:
+Responses API ベースの LLM 拡張に向けた最終タスクリスト。各タスクは 1〜3 時間規模で、受け入れ基準 (AC) を満たすこと。
 
-- **[T01] pydantic モデル定義** — `goapgit/core/models.py` 作成。mypy/ruff 合格、`RepoState` と `Plan` の JSON ラウンドトリップが通る。
-- **[T02] 設定ローダ** — TOML 読み込みと `Config` バリデーションを実装。不正値で ValidationError。
-- **[T03] 構造化ログ** — JSON Lines ロガー。`--json` 時は 1 行 1 JSON、INFO/ERROR 切り替え。
-- …（以降 T61 まで GitFacade、観測器、プランナー、CLI、CI などを詳細化）。
+### A. クライアント層
 
-各タスクの優先順位: Phase 1（基盤）→ Phase 2（Git 操作）→ Phase 3（プランニング）→ Phase 4（アクション）→ Phase 5（CLI・診断）→ Phase 6（QA/CI）。
+- **[LZ01] Provider 切替実装** — `GOAPGIT_LLM_PROVIDER` に基づき OpenAI/Azure のクライアントを自動選択。HTTP モックで双方向を検証。
+- **[LZ02] Responses API ラッパ（最小履歴）** — `complete_json()` が `instructions` の再送と `previous_response_id` チェーンを管理。
+- **[LZ03] Schema サニタイザ** — Pydantic schema を Strict JSON Schema に整形し、Structured Outputs で受理されることを確認。
+- **[LZ04] Instructions コンポーザ** — Resolver/Messenger/Planner 役割に応じたテンプレートを提供し、各呼び出しで必ず添付。
+
+### B. 競合解決ワークフロー
+
+- **[LZ10] LLM:ProposePatch（Responses 版）** — 最小抜粋入力で PatchSet を生成し、失敗時は `previous_response_id` で鎖状に再提案。
+- **[LZ11] StrategyAdvice（Responses 版）** — ours/theirs/manual/merge-driver の推奨 JSON を返し、ゴールデンケースを一致させる。
+- **[LZ12] PlanHint（コスト補正）** — ±20% クランプ済みのコスト補正を返し、A* の見積もりログに反映する。
+- **[LZ13] MessageDraft（commit/pr）** — 72 文字以内タイトルと章立て本文を生成し、`response.output_text` と整合。
+
+### C. セーフティ／運用
+
+- **[LZ20] Redactor & Budget** — 機密サニタイズと `--llm-max-tokens` / `--llm-max-cost` による早期停止を実装。
+- **[LZ21] LLM Telemetry（Responses 版）** — `response.id` 鎖とトークン統計を JSON Lines に記録。
+
+### D. CLI
+
+- **[LZ30] llm doctor** — 環境変数チェック、Structured Outputs のパース、`previous_response_id` 連鎖の健全性を診断。
+- **[LZ31] run --llm モード拡張** — `off|explain|suggest|auto` の各モードとセーフティレベルを Responses 版で再構築。
+
+推奨実装順は `[LZ01] → [LZ04] → [LZ10]/[LZ12] → [LZ30]`。各フェーズ完了後に README / docs を更新し、`uv run nox -s lint` と `uv run nox -s typing` を通過させること。
+
+---
+
+## 13. LLM 運用ガイドライン
+
+1. **最小履歴ポリシー** — 直前の `response.id` のみを `previous_response_id` に指定し、入力は最新の差分や抜粋に絞る。履歴全文や秘匿情報を送らない。
+2. **instructions の再送** — Responses API は instructions を継承しない前提で、各ターンでテンプレートを明示送信する。
+3. **Structured Outputs の厳格化** — サニタイザで `additionalProperties=false`、必須項目列挙、深さ/項目数の制約を守る。逸脱時はリトライと軽微な自動修復で対処。
+4. **セキュリティ** — サニタイズ対象（API キー、URL パラメータ等）を送信前にマスクし、ログにも非表示で記録する。
+5. **コスト管理** — `--llm-max-tokens` と `--llm-max-cost` を超過したら LLM 呼び出しを停止し、従来の GOAP 手順へフォールバックする。
+6. **テレメトリ** — `response.id`, `previous_response_id`, token usage, mode, 成否のみを JSON Lines に記録し、応答本文は保持しない。
+7. **モデル切替** — チェーン中にモデルやデプロイを変えると継承が不安定になるため、同一モデルでチェーンを完結させる。切替が必要な場合は新規チェーンを開始する。
 
 ---
 
