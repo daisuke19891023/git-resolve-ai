@@ -6,6 +6,8 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 __all__ = [
+    "BudgetExceededError",
+    "BudgetTracker",
     "CompleteJsonResult",
     "ConfidenceLevel",
     "InstructionRole",
@@ -14,6 +16,9 @@ __all__ = [
     "MessageDraft",
     "PatchSet",
     "PlanHint",
+    "RedactionResult",
+    "RedactionRule",
+    "Redactor",
     "ResolutionStrategy",
     "StrategyAdvice",
     "complete_json",
@@ -35,6 +40,13 @@ if TYPE_CHECKING:
         messenger_instructions,
         planner_instructions,
         resolver_instructions,
+    )
+    from .safety import (
+        BudgetExceededError,
+        BudgetTracker,
+        RedactionResult,
+        RedactionRule,
+        Redactor,
     )
     from .schema import (
         ConfidenceLevel,
@@ -65,6 +77,11 @@ _MODULE_EXPORTS: dict[str, tuple[str, str]] = {
     "LLMProvider": ("goapgit.llm.client", "LLMProvider"),
     "LLMSettings": ("goapgit.llm.client", "LLMSettings"),
     "make_client_from_env": ("goapgit.llm.client", "make_client_from_env"),
+    "BudgetExceededError": ("goapgit.llm.safety", "BudgetExceededError"),
+    "BudgetTracker": ("goapgit.llm.safety", "BudgetTracker"),
+    "RedactionResult": ("goapgit.llm.safety", "RedactionResult"),
+    "RedactionRule": ("goapgit.llm.safety", "RedactionRule"),
+    "Redactor": ("goapgit.llm.safety", "Redactor"),
 }
 
 
