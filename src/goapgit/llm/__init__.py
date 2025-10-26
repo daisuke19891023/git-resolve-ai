@@ -6,6 +6,8 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 __all__ = [
+    "BudgetExceededError",
+    "BudgetTracker",
     "CompleteJsonResult",
     "ConfidenceLevel",
     "InstructionRole",
@@ -17,9 +19,13 @@ __all__ = [
     "PatchSet",
     "PlanHint",
     "PlanHintResult",
+    "RedactionResult",
+    "Redactor",
     "ResolutionStrategy",
     "StrategyAdvice",
     "StrategyAdviceResult",
+    "TelemetryLogger",
+    "TelemetryRecord",
     "advise_strategy",
     "apply_plan_hint",
     "build_message_prompt",
@@ -42,6 +48,12 @@ __all__ = [
 if TYPE_CHECKING:
     from .client import LLMProvider, LLMSettings, make_client_from_env
     from .responses import CompleteJsonResult, complete_json
+    from .safety import (
+        BudgetExceededError,
+        BudgetTracker,
+        RedactionResult,
+        Redactor,
+    )
     from .instructions import (
         InstructionRole,
         compose_instructions,
@@ -49,6 +61,7 @@ if TYPE_CHECKING:
         planner_instructions,
         resolver_instructions,
     )
+    from .telemetry import TelemetryLogger, TelemetryRecord
     from .schema import (
         ConfidenceLevel,
         MessageDraft,
@@ -79,6 +92,10 @@ _MODULE_EXPORTS: dict[str, tuple[str, str]] = {
     "CompleteJsonResult": ("goapgit.llm.responses", "CompleteJsonResult"),
     "complete_json": ("goapgit.llm.responses", "complete_json"),
     "InstructionRole": ("goapgit.llm.instructions", "InstructionRole"),
+    "BudgetExceededError": ("goapgit.llm.safety", "BudgetExceededError"),
+    "BudgetTracker": ("goapgit.llm.safety", "BudgetTracker"),
+    "Redactor": ("goapgit.llm.safety", "Redactor"),
+    "RedactionResult": ("goapgit.llm.safety", "RedactionResult"),
     "ConfidenceLevel": ("goapgit.llm.schema", "ConfidenceLevel"),
     "MessageDraft": ("goapgit.llm.schema", "MessageDraft"),
     "MessageDraftResult": ("goapgit.llm.message", "MessageDraftResult"),
@@ -106,6 +123,8 @@ _MODULE_EXPORTS: dict[str, tuple[str, str]] = {
     "request_message_draft": ("goapgit.llm.message", "request_message_draft"),
     "clamp_cost_adjustment": ("goapgit.llm.plan", "clamp_cost_adjustment"),
     "validate_message_draft": ("goapgit.llm.message", "validate_message_draft"),
+    "TelemetryLogger": ("goapgit.llm.telemetry", "TelemetryLogger"),
+    "TelemetryRecord": ("goapgit.llm.telemetry", "TelemetryRecord"),
 }
 
 
