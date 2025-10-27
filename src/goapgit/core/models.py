@@ -91,6 +91,7 @@ class GoalSpec(BaseModel):
     mode: GoalMode = GoalMode.rebase_to_upstream
     tests_must_pass: bool = False
     push_with_lease: bool = False
+    tests_command: tuple[str, ...] = ("uv", "run", "nox", "-s", "test")
 
     model_config = ConfigDict(extra="forbid")
 

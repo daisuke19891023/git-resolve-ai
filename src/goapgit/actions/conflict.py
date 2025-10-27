@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     from goapgit.git.facade import GitFacade
     from goapgit.io.logging import StructuredLogger
 
+from goapgit.git.parse import predict_merge_conflicts
+
 
 class ConflictLike(Protocol):
     """Protocol describing the minimal conflict information required."""
@@ -83,6 +85,24 @@ def apply_path_strategy(
         )
         resolved.append(conflict.path)
     return resolved
+
+
+def preview_merge_conflicts(
+    facade: GitFacade,
+    logger: StructuredLogger,
+    ours: str,
+    theirs: str,
+) -> set[str]:
+    """Predict merge conflicts between ``ours`` and ``theirs`` without mutating the tree."""
+    predicted = predict_merge_conflicts(facade, ours, theirs)
+    logger.info(
+        "predicted merge-tree conflicts",
+        ours=ours,
+        theirs=theirs,
+        conflict_count=len(predicted),
+        conflicts=sorted(predicted),
+    )
+    return predicted
 
 
 def _select_rule(

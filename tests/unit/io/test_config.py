@@ -39,6 +39,7 @@ def test_load_config_from_path(tmp_path: pathlib.Path) -> None:
 
     assert isinstance(config, Config)
     assert config.goal.push_with_lease is True
+    assert config.goal.tests_command == ("uv", "run", "nox", "-s", "test")
     assert config.strategy_rules[0].pattern == "**/*.lock"
     assert config.dry_run is False
 

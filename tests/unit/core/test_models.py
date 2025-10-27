@@ -89,3 +89,4 @@ def test_goal_defaults() -> None:
     assert spec.mode is GoalMode.rebase_to_upstream
     assert spec.tests_must_pass is False
     assert spec.push_with_lease is False
+    assert spec.tests_command == ("uv", "run", "nox", "-s", "test")

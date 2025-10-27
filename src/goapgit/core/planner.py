@@ -67,7 +67,7 @@ class SimplePlanner:
     """Lightweight A* inspired planner that assembles a plan from injected actions."""
 
     _MIN_ACTIONS = 3
-    _MAX_ACTIONS = 5
+    _MAX_ACTIONS = 8
 
     def __init__(self, *, weights: HeuristicWeights | None = None) -> None:
         """Create a planner with the provided heuristic weights."""
