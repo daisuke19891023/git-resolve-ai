@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from goapgit.git.facade import GitCommandError
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     import subprocess
     from pathlib import Path
     from goapgit.git.facade import GitFacade
@@ -76,4 +77,24 @@ def explain_range_diff(
     return result.stdout or ""
 
 
-__all__ = ["explain_range_diff"]
+def run_tests(
+    facade: GitFacade,
+    logger: StructuredLogger,
+    command: Sequence[str],
+    *,
+    timeout: float | None = None,
+) -> str:
+    """Execute the configured test command and return its stdout."""
+    if not command:
+        msg = "test command must not be empty"
+        raise ValueError(msg)
+
+    command_list = [str(part) for part in command]
+    logger.info("running tests", command=command_list, timeout=timeout)
+    result = facade.run(command_list, timeout=timeout)
+    summary = (result.stdout or "").strip()
+    logger.info("tests completed", returncode=result.returncode, summary=summary)
+    return result.stdout or ""
+
+
+__all__ = ["explain_range_diff", "run_tests"]

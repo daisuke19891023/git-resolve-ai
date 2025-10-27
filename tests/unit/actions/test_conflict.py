@@ -5,15 +5,20 @@ import subprocess
 from dataclasses import dataclass
 from unittest.mock import call
 
-import pytest
 from typing import TYPE_CHECKING
+
+import pytest
+
+from goapgit.actions.conflict import (
+    apply_path_strategy,
+    auto_trivial_resolve,
+    preview_merge_conflicts,
+)
+from goapgit.git.facade import GitFacade
+from goapgit.io.logging import StructuredLogger
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
-
-from goapgit.actions.conflict import apply_path_strategy, auto_trivial_resolve
-from goapgit.git.facade import GitFacade
-from goapgit.io.logging import StructuredLogger
 
 
 @pytest.fixture
@@ -92,3 +97,20 @@ def test_apply_path_strategy_prefixes_separator_before_conflict_path(
     assert resolved == ["-leading"]
     assert call(["git", "checkout", checkout_flag, "--", "-leading"]) in facade.run.call_args_list
     assert call(["git", "add", "--", "-leading"]) in facade.run.call_args_list
+
+
+def test_preview_merge_conflicts_delegates_to_predictor(
+    mocker: MockerFixture,
+    logger: StructuredLogger,
+) -> None:
+    """Ensure the helper logs predicted conflicts without mutating state."""
+    facade = mocker.create_autospec(GitFacade, instance=True)
+    predictor = mocker.patch(
+        "goapgit.actions.conflict.predict_merge_conflicts",
+        return_value={"a.txt", "b.txt"},
+    )
+
+    predicted = preview_merge_conflicts(facade, logger, "HEAD", "origin/main")
+
+    assert predicted == {"a.txt", "b.txt"}
+    predictor.assert_called_once_with(facade, "HEAD", "origin/main")

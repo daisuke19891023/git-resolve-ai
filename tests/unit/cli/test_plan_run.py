@@ -3,21 +3,34 @@
 from __future__ import annotations
 
 import importlib
+import io
 import json
 import subprocess
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from typer.testing import CliRunner
+
+from goapgit.cli.runtime import (
+    ACTION_HANDLERS,
+    WorkflowContext,
+    build_action_specs,
+    default_config,
+)
+from goapgit.core.models import ActionSpec, Config, RepoRef, RepoState
+from goapgit.core.planner import SimplePlanner
+from goapgit.git.facade import GitFacade
+from goapgit.io.logging import StructuredLogger
 
 
 cli_main = importlib.import_module("goapgit.cli.main")
 
 if TYPE_CHECKING:
-    from pathlib import Path
-    from goapgit.cli.main import PlanComputation
-    from goapgit.cli.runtime import WorkflowContext
     from collections.abc import Callable
+    from pathlib import Path
+
+    from goapgit.cli.main import PlanComputation
+    from pytest_mock import MockerFixture
 
     WorkflowContextFactory = Callable[..., WorkflowContext]
     PlanPayloadBuilder = Callable[[WorkflowContext], PlanComputation]
@@ -198,6 +211,219 @@ def test_dry_run_command_escapes_control_sequences(monkeypatch: pytest.MonkeyPat
     assert "\x1b" not in result.stdout
 
 
+def test_plan_includes_remote_sync_actions_when_behind(tmp_path: Path) -> None:
+    """Remote divergence should schedule preview, fetch, and rebase actions."""
+    state = RepoState(
+        repo_path=tmp_path,
+        ref=RepoRef(branch="feature", tracking="origin/feature", sha="deadbeef"),
+        diverged_remote=3,
+        diverged_local=1,
+        has_unpushed_commits=True,
+        working_tree_clean=True,
+    )
+    config = default_config()
+
+    actions = build_action_specs(state, config)
+    plan = SimplePlanner().plan(state, config.goal, actions)
+
+    names = {action.name for action in plan.actions}
+    assert {"Conflict:PreviewMergeConflicts", "Sync:FetchAll", "Rebase:OntoUpstream"} <= names
+
+
+def test_plan_includes_run_tests_when_required(tmp_path: Path) -> None:
+    """Enabling tests_must_pass should add the Quality:RunTests action."""
+    state = RepoState(
+        repo_path=tmp_path,
+        ref=RepoRef(branch="feature", tracking="origin/feature", sha="deadbeef"),
+        working_tree_clean=True,
+    )
+    config = default_config()
+    config.goal.tests_must_pass = True
+
+    actions = build_action_specs(state, config)
+    plan = SimplePlanner().plan(state, config.goal, actions)
+
+    names = {action.name for action in plan.actions}
+    assert "Quality:RunTests" in names
+
+
+def test_plan_includes_range_diff_when_ahead(tmp_path: Path) -> None:
+    """Ahead-of-tracking branches should request a range-diff summary."""
+    state = RepoState(
+        repo_path=tmp_path,
+        ref=RepoRef(branch="feature", tracking="origin/feature", sha="deadbeef"),
+        diverged_local=2,
+        has_unpushed_commits=True,
+        working_tree_clean=True,
+    )
+    config = default_config()
+
+    actions = build_action_specs(state, config)
+    plan = SimplePlanner().plan(state, config.goal, actions)
+
+    names = {action.name for action in plan.actions}
+    assert "Quality:ExplainRangeDiff" in names
+
+
+def test_plan_includes_push_with_lease_when_goal_enabled(tmp_path: Path) -> None:
+    """Push goal should surface the Sync:PushWithLease action."""
+    state = RepoState(
+        repo_path=tmp_path,
+        ref=RepoRef(branch="feature", tracking="origin/feature", sha="deadbeef"),
+        diverged_local=1,
+        has_unpushed_commits=True,
+        working_tree_clean=True,
+    )
+    config = default_config()
+    config.goal.push_with_lease = True
+
+    actions = build_action_specs(state, config)
+    plan = SimplePlanner().plan(state, config.goal, actions)
+
+    names = {action.name for action in plan.actions}
+    assert "Sync:PushWithLease" in names
+
+
+def _make_action_context(
+    tmp_path: Path,
+    mocker: MockerFixture,
+    *,
+    config: Config | None = None,
+) -> WorkflowContext:
+    cfg = config or default_config()
+    logger = StructuredLogger(name="test-runtime", stream=io.StringIO())
+    action_facade = cast("Any", mocker.create_autospec(GitFacade, instance=True))
+    observer_facade = cast("Any", mocker.create_autospec(GitFacade, instance=True))
+    observer = cast("Any", mocker.Mock())
+    observer.observe.return_value = RepoState(
+        repo_path=tmp_path,
+        ref=RepoRef(branch="feature", tracking="origin/feature", sha="deadbeef"),
+    )
+    return WorkflowContext(
+        repo_path=tmp_path,
+        config=cfg,
+        logger=logger,
+        action_facade=action_facade,
+        observer_facade=observer_facade,
+        observer=observer,
+        planner=SimplePlanner(),
+    )
+
+
+def test_fetch_handler_invokes_helper(tmp_path: Path, mocker: MockerFixture) -> None:
+    """The fetch action handler should call the sync helper."""
+    context = _make_action_context(tmp_path, mocker)
+    fetch_mock = mocker.patch("goapgit.cli.runtime.fetch_all")
+
+    action = ActionSpec(name="Sync:FetchAll", params={"remote": "origin"}, cost=1.1)
+
+    handler = ACTION_HANDLERS["Sync:FetchAll"]
+    assert handler.run(context, action) is True
+    fetch_mock.assert_called_once_with(context.action_facade, context.logger, remote="origin")
+
+
+def test_preview_handler_invokes_merge_tree(tmp_path: Path, mocker: MockerFixture) -> None:
+    """Preview action should delegate to the merge-tree predictor using the observer facade."""
+    context = _make_action_context(tmp_path, mocker)
+    preview_mock = mocker.patch("goapgit.cli.runtime.preview_merge_conflicts", return_value=set())
+
+    action = ActionSpec(
+        name="Conflict:PreviewMergeConflicts",
+        params={"ours": "HEAD", "theirs": "origin/main"},
+        cost=0.9,
+    )
+
+    handler = ACTION_HANDLERS["Conflict:PreviewMergeConflicts"]
+    assert handler.run(context, action) is True
+    preview_mock.assert_called_once_with(context.observer_facade, context.logger, "HEAD", "origin/main")
+
+
+def test_rebase_onto_handler_invokes_helper(tmp_path: Path, mocker: MockerFixture) -> None:
+    """Rebase handler should call rebase_onto_upstream with parsed params."""
+    context = _make_action_context(tmp_path, mocker)
+    rebase_mock = mocker.patch("goapgit.cli.runtime.rebase_onto_upstream")
+
+    action = ActionSpec(
+        name="Rebase:OntoUpstream",
+        params={"upstream": "origin/main", "update_refs": "true"},
+        cost=1.0,
+    )
+
+    handler = ACTION_HANDLERS["Rebase:OntoUpstream"]
+    assert handler.run(context, action) is True
+    rebase_mock.assert_called_once_with(
+        context.action_facade,
+        context.logger,
+        "origin/main",
+        update_refs=True,
+        onto=None,
+    )
+
+
+def test_push_handler_builds_refspec(tmp_path: Path, mocker: MockerFixture) -> None:
+    """Push handler should construct the refspec before calling git push."""
+    context = _make_action_context(tmp_path, mocker)
+    push_mock = mocker.patch("goapgit.cli.runtime.push_with_lease")
+
+    action = ActionSpec(
+        name="Sync:PushWithLease",
+        params={"remote": "origin", "remote_branch": "main", "local_branch": "feature"},
+        cost=1.6,
+    )
+
+    handler = ACTION_HANDLERS["Sync:PushWithLease"]
+    assert handler.run(context, action) is True
+    push_mock.assert_called_once_with(
+        context.action_facade,
+        context.logger,
+        remote="origin",
+        refspecs=["feature:main"],
+        force=context.config.allow_force_push,
+    )
+
+
+def test_run_tests_handler_invokes_helper(tmp_path: Path, mocker: MockerFixture) -> None:
+    """Run tests handler should execute the configured command via the helper."""
+    config = default_config()
+    config.goal.tests_command = ("pytest",)
+    config.max_test_runtime_sec = 30
+    context = _make_action_context(tmp_path, mocker, config=config)
+    run_tests_mock = mocker.patch("goapgit.cli.runtime.run_tests")
+
+    action = ActionSpec(name="Quality:RunTests", params={"timeout_sec": "30"}, cost=1.2)
+
+    handler = ACTION_HANDLERS["Quality:RunTests"]
+    assert handler.run(context, action) is True
+    run_tests_mock.assert_called_once_with(
+        context.action_facade,
+        context.logger,
+        ("pytest",),
+        timeout=30.0,
+    )
+
+
+def test_range_diff_handler_invokes_merge_base(tmp_path: Path, mocker: MockerFixture) -> None:
+    """Range-diff handler should compute the merge base and invoke explain_range_diff."""
+    context = _make_action_context(tmp_path, mocker)
+    cast("Any", context.observer_facade.run).return_value = subprocess.CompletedProcess(
+        ["git"],
+        0,
+        stdout="base\n",
+        stderr="",
+    )
+    explain_mock = mocker.patch("goapgit.cli.runtime.explain_range_diff", return_value="summary")
+
+    action = ActionSpec(name="Quality:ExplainRangeDiff", params={"tracking": "origin/main"}, cost=1.3)
+
+    handler = ACTION_HANDLERS["Quality:ExplainRangeDiff"]
+    assert handler.run(context, action) is True
+    cast("Any", context.observer_facade.run).assert_called_once_with(["git", "merge-base", "HEAD", "origin/main"])
+    explain_mock.assert_called_once_with(
+        context.observer_facade,
+        context.logger,
+        "base..origin/main",
+        "base..HEAD",
+    )
 def test_build_plan_payload_returns_expected_sections(init_repo: Path) -> None:
     """Ensure the shared helper reports state, actions, and plans."""
     prepare_context = cast("WorkflowContextFactory",

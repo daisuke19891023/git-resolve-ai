@@ -4,9 +4,10 @@ import io
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
+
 import pytest
 
-from goapgit.actions.quality import explain_range_diff
+from goapgit.actions.quality import explain_range_diff, run_tests
 from goapgit.io.logging import StructuredLogger
 
 if TYPE_CHECKING:
@@ -19,11 +20,13 @@ class FakeGitFacade:
     def __init__(self, responses: list[SimpleNamespace] | None = None) -> None:
         """Initialise the fake facade with an optional response sequence."""
         self.commands: list[tuple[list[str], bool]] = []
+        self.kwargs: list[dict[str, object]] = []
         self._responses = list(responses) if responses is not None else None
 
-    def run(self, command: list[str], *, check: bool = True, **_: object) -> SimpleNamespace:  # type: ignore[override]
+    def run(self, command: list[str], *, check: bool = True, **kwargs: object) -> SimpleNamespace:  # type: ignore[override]
         """Record the command and mimic a git invocation."""
         self.commands.append((list(command), check))
+        self.kwargs.append(dict(kwargs))
         if self._responses is not None:
             if not self._responses:
                 msg = "No more fake responses configured"
@@ -87,3 +90,23 @@ def test_explain_range_diff_retries_without_separator_when_git_needs_ranges() ->
         (["git", "range-diff", "--", before, after], False),
         (["git", "range-diff", before, after], False),
     ]
+
+
+def test_run_tests_invokes_facade_with_timeout() -> None:
+    """The run_tests helper should pass the command and timeout to the facade."""
+    facade = FakeGitFacade()
+    logger = _make_logger()
+
+    run_tests(cast("GitFacade", facade), logger, ["pytest"], timeout=42.0)
+
+    assert facade.commands == [(["pytest"], True)]
+    assert facade.kwargs == [{"timeout": 42.0}]
+
+
+def test_run_tests_rejects_empty_command() -> None:
+    """An empty command sequence should raise a ValueError."""
+    facade = FakeGitFacade()
+    logger = _make_logger()
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        run_tests(cast("GitFacade", facade), logger, [])
